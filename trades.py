@@ -22,7 +22,8 @@ def trades_loss(model,
                 epsilon=0.031,
                 perturb_steps=10,
                 beta=1.0,
-                distance='l_inf'):
+                distance='l_inf',
+                is_training=True):
     # define KL-loss
     criterion_kl = nn.KLDivLoss(size_average=False)
     model.eval()
@@ -33,8 +34,8 @@ def trades_loss(model,
         for _ in range(perturb_steps):
             x_adv.requires_grad_()
             with torch.enable_grad():
-                loss_kl = criterion_kl(F.log_softmax(model(x_adv), dim=1),
-                                       F.softmax(model(x_natural), dim=1))
+                loss_kl = criterion_kl(F.log_softmax(model(x_adv)['logits'], dim=1),
+                                       F.softmax(model(x_natural)['logits'], dim=1))
             grad = torch.autograd.grad(loss_kl, [x_adv])[0]
             x_adv = x_adv.detach() + step_size * torch.sign(grad.detach())
             x_adv = torch.min(torch.max(x_adv, x_natural - epsilon), x_natural + epsilon)
@@ -52,8 +53,8 @@ def trades_loss(model,
             # optimize
             optimizer_delta.zero_grad()
             with torch.enable_grad():
-                loss = (-1) * criterion_kl(F.log_softmax(model(adv), dim=1),
-                                           F.softmax(model(x_natural), dim=1))
+                loss = (-1) * criterion_kl(F.log_softmax(model(adv)['logits'], dim=1),
+                                           F.softmax(model(x_natural)['logits'], dim=1))
             loss.backward()
             # renorming gradient
             grad_norms = delta.grad.view(batch_size, -1).norm(p=2, dim=1)
@@ -70,15 +71,15 @@ def trades_loss(model,
         x_adv = Variable(x_natural + delta, requires_grad=False)
     else:
         x_adv = torch.clamp(x_adv, 0.0, 1.0)
-    model.train()
+    model.train(is_training)
 
     x_adv = Variable(torch.clamp(x_adv, 0.0, 1.0), requires_grad=False)
     # zero gradient
     optimizer.zero_grad()
     # calculate robust loss
-    logits = model(x_natural)
+    logits = model(x_natural)['logits']
     loss_natural = F.cross_entropy(logits, y)
-    loss_robust = (1.0 / batch_size) * criterion_kl(F.log_softmax(model(x_adv), dim=1),
-                                                    F.softmax(model(x_natural), dim=1))
+    loss_robust = (1.0 / batch_size) * criterion_kl(F.log_softmax(model(x_adv)['logits'], dim=1),
+                                                    F.softmax(model(x_natural)['logits'], dim=1))
     loss = loss_natural + beta * loss_robust
     return loss
